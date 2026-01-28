@@ -97,9 +97,3 @@ Distance from the city centre plays a larger role than income in explaining acce
 Large raw datasets and intermediate outputs are not included in this repository to keep it lightweight.
 
 The repository focuses on the computational methods, analysis logic, and visual outputs used in the thesis.
-
----
-
-## Academic context
-
-This project was developed as part of an MSc thesis in Software Design at the IT University of Copenhagen.
