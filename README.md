@@ -7,8 +7,6 @@ Cem Ergin, IT University of Copenhagen, January 2026
 
 The project examines whether differences in pedestrian accessibility to urban amenities are associated with income differences across Copenhagen districts.
 
----e
-
 ## Project motivation
 
 Urban accessibility is often assumed to be evenly distributed in Copenhagen due to its compact urban form and strong public infrastructure. This thesis investigates whether that assumption holds when accessibility is measured using realistic walking distances on the street network and compared across income levels.
