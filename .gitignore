@@ -6,3 +6,5 @@ pipeline/cache/
 *.tif
 *.parquet
 *.zip
+__pycache__/
+.DS_Store
