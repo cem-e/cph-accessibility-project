@@ -1,0 +1,2543 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Accessibility Map</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
+    <link
+      href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css"
+      rel="stylesheet"
+    />
+    <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+    <style>
+      /* I'm stripping the default margins/padding so the map truly hugs the window edges. */
+      body {
+        margin: 0;
+        padding: 0;
+      }
+      /* I'm pinning the map to the full viewport so it acts as the canvas for everything else. */
+      #map {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 100%;
+      }
+      /* I'm treating the control box like a floating card so the toggles stay readable. */
+      #controls {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        background: white;
+        padding: 10px;
+        font-family: system-ui, sans-serif;
+        font-size: 14px;
+        max-width: 280px;
+        border-radius: 4px;
+        box-shadow: 0 0 6px rgba(0, 0, 0, 0.3);
+        z-index: 1;
+      }
+      /* I'm drawing the mini legend dots by hand so the color swatches match the layers exactly. */
+      .legend-dot {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        margin-left: 4px;
+        vertical-align: middle;
+        border: 1px solid #cccccc;
+      }
+      .legend-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 16px);
+        grid-template-rows: repeat(3, 16px);
+        gap: 2px;
+        margin: 6px 0;
+      }
+      .legend-cell {
+        width: 16px;
+        height: 16px;
+        border: 1px solid #cccccc;
+      }
+      .legend-axis-label {
+        font-size: 11px;
+        color: #555555;
+      }
+      .legend-access-note {
+        text-align: left;
+        margin-top: 6px;
+      }
+      .legend-tertile {
+        margin-top: 6px;
+      }
+      .legend-tertile-title {
+        font-size: 11px;
+        color: #333333;
+        font-weight: 600;
+      }
+      .legend-tertile-detail {
+        font-size: 11px;
+        color: #555555;
+        margin-top: 2px;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      #poi-search-container {
+        margin-top: 10px;
+      }
+      #poi-search-container label {
+        font-weight: 600;
+        display: block;
+      }
+      #poi-search {
+        width: 100%;
+        box-sizing: border-box;
+        margin-top: 6px;
+        padding: 6px 8px;
+        border: 1px solid #cccccc;
+        border-radius: 4px;
+        font-size: 13px;
+      }
+      #poi-search:focus {
+        outline: 2px solid #2980b9;
+        outline-offset: 1px;
+      }
+      #poi-search-results {
+        margin-top: 6px;
+        max-height: 160px;
+        overflow-y: auto;
+        border: 1px solid #d0d0d0;
+        border-radius: 4px;
+        background: #ffffff;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+        display: none;
+      }
+      .poi-search-result {
+        display: block;
+        width: 100%;
+        border: 0;
+        background: none;
+        text-align: left;
+        padding: 6px 8px;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      .poi-search-result:hover,
+      .poi-search-result:focus {
+        background: #f0f4ff;
+        outline: none;
+      }
+      .poi-search-empty {
+        font-size: 12px;
+        color: #666666;
+        padding: 6px 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="map"></div>
+
+    <div id="controls">
+      <h3>Accessibility Map</h3>
+      <div id="poi-search-container">
+        <label for="poi-search">Find a POI</label>
+        <input
+          type="search"
+          id="poi-search"
+          name="poi-search"
+          placeholder="Search by name…"
+          autocomplete="off"
+        />
+        <div
+          id="poi-search-results"
+          role="listbox"
+          aria-label="POI search suggestions"
+        ></div>
+      </div>
+      <p>Toggle amenities:</p>
+      <label
+        ><input type="checkbox" id="toggle-cafes_restaurants" checked />
+        Food &amp; Drink
+        <span class="legend-dot" style="background: #c0392b"></span></label
+      ><br />
+      <label
+        ><input type="checkbox" id="toggle-supermarkets" checked />
+        Supermarkets
+        <span class="legend-dot" style="background: #8e44ad"></span></label
+      ><br />
+      <label
+        ><input type="checkbox" id="toggle-education" checked />
+        Education
+        <span class="legend-dot" style="background: #2980b9"></span></label
+      ><br />
+      <label
+      ><input type="checkbox" id="toggle-health" checked /> Health
+      <span class="legend-dot" style="background: #e84393"></span></label
+    ><br />
+      <label
+        ><input type="checkbox" id="toggle-culture" checked /> Culture
+        <span class="legend-dot" style="background: #000000"></span></label
+      ><br />
+      <label
+        ><input type="checkbox" id="toggle-parks" checked /> Parks
+        <span class="legend-dot" style="background: #27ae60"></span></label
+      ><br />
+      <label
+        ><input type="checkbox" id="toggle-playgrounds" checked />
+        Playgrounds
+        <span class="legend-dot" style="background: #8e6b3a"></span></label
+      ><br />
+      <label
+        ><input type="checkbox" id="toggle-pt_stops" checked /> Public Transport
+        Stops <span class="legend-dot" style="background: #f39c12"></span
+      ></label>
+      <hr style="margin: 8px 0" />
+      <label
+        ><input type="checkbox" id="toggle-kvarter" checked /> Districts</label
+      >
+      <div style="margin-top: 8px">
+        <label
+          ><input type="checkbox" id="toggle-low-population" checked />
+          Show population context</label
+        >
+      </div>
+      <div style="margin-top: 8px">
+        <label
+          ><input type="checkbox" id="toggle-include-parks-calcs" checked />
+          Include Green Areas</label
+        >
+      </div>
+      <div style="margin-top: 10px">
+        <strong>District Scoring</strong><br />
+        <label
+          ><input
+            type="radio"
+            name="district-mode"
+            id="district-mode-baseline"
+            value="baseline"
+            checked
+          />
+          Income × Accessibility (all nodes included)</label
+        ><br />
+        <label
+          ><input
+            type="radio"
+            name="district-mode"
+            id="district-mode-isolation"
+            value="isolation"
+          />
+          Income × Accessibility (low-population nodes excluded)</label
+        >
+      </div>
+      <div id="legend-bivariate-container" style="margin-top: 10px">
+        <strong id="legend-title">District Classification</strong>
+        <div class="legend-axis-label" style="margin-top: 4px">Income →</div>
+        <div id="bivariate-legend" class="legend-grid"></div>
+        <div class="legend-axis-label legend-access-note">Better access ↑</div>
+        <div class="legend-tertile">
+          <div class="legend-tertile-title">Income (DKK)</div>
+          <div id="income-tertile-detail" class="legend-tertile-detail">
+            loading…
+          </div>
+        </div>
+        <div class="legend-tertile">
+          <div id="access-tertile-title" class="legend-tertile-title">
+            Accessibility (avg min, all amenity types)
+          </div>
+          <div id="access-tertile-detail" class="legend-tertile-detail">
+            loading…
+          </div>
+        </div>
+      </div>
+    </div>
+    <script>
+      // I'm stashing the public Mapbox token here so I can keep the map working without extra config.
+      mapboxgl.accessToken =
+        "pk.eyJ1IjoiY2VtZSIsImEiOiJjbWZjZjRqaHMwYXc1MmxxdzNyZW0wOW93In0.y9bDLzOefJYN59c7F8epwA";
+      // I'm setting up the base map centered over Copenhagen with the light basemap so my overlays stand out.
+      const map = new mapboxgl.Map({
+        container: "map",
+        style: "mapbox://styles/mapbox/light-v11",
+        center: [12.5683, 55.6761],
+        zoom: 11,
+      });
+
+      map.on("load", () => {
+        // I'm using an average walking speed (in meters per minute) to convert raw distances into minutes.
+        const WALK_SPEED_M_PER_MIN = 80;
+        // I'm listing the accessibility metrics I care about so I can reuse them in popups and legends.
+        const NETWORK_METRICS = [
+          ["min_to_cafes_restaurants", "Food & Drink"],
+          ["min_to_supermarkets", "supermarkets"],
+          ["min_to_education", "education"],
+          ["min_to_health", "health"],
+          ["min_to_culture", "culture"],
+          ["min_to_parks", "parks"],
+          ["min_to_playgrounds", "playgrounds"],
+          ["min_to_pt_stops", "PT"],
+        ];
+        const FLAKFORTET_SUPERMARKET_NAMES = new Set(
+          ["Restaurant Flakfortet på Øen i Øresund", "Flakfortet på Øen i Øresund", "Restaurant Flakfortet"].map(
+            (name) => name.toLowerCase()
+          )
+        );
+        const FLAKFORTET_RESTAURANT_NAMES = new Set(
+          ["Flakfortet Minimarked", "Minimarked Flakfortet"].map((name) => name.toLowerCase())
+        );
+        const shouldZeroSupermarketExtra = (name) => {
+          if (typeof name !== "string") return false;
+          const trimmed = name.trim().toLowerCase();
+          return trimmed.length && FLAKFORTET_SUPERMARKET_NAMES.has(trimmed);
+        };
+        const shouldZeroFoodExtra = (name) => {
+          if (typeof name !== "string") return false;
+          const trimmed = name.trim().toLowerCase();
+          return trimmed.length && FLAKFORTET_RESTAURANT_NAMES.has(trimmed);
+        };
+        const PARK_METRIC_KEY = "min_to_parks";
+        const DISTRICT_MODES = {
+          BASELINE: "baseline",
+          ISOLATION: "isolation",
+        };
+        const ISOLATED_COLOR = "#9e9e9e";
+        const POPULATION_FORMATTER = new Intl.NumberFormat("da-DK", {
+          minimumFractionDigits: 0,
+          maximumFractionDigits: 0,
+        });
+
+        const BIVARIATE_COLORS = [
+          ["#e6ddcf", "#b5c0da", "#6c83b5"],
+          ["#e4acac", "#b58aa6", "#6c5b7b"],
+          ["#c85a5a", "#985356", "#574249"],
+        ];
+        // Use the blended "any POI" average as the accessibility dimension for the legend.
+        const ACCESS_LABELS = [
+          "Longest avg minutes (all amenities)",
+          "Medium avg minutes (all amenities)",
+          "Shortest avg minutes (all amenities)",
+        ];
+        const INCOME_LABELS = [
+          "Lowest income",
+          "Medium income",
+          "Highest income",
+        ];
+        const DISTRICT_CATEGORY_KEYS = NETWORK_METRICS.map(([key]) => key);
+        let currentDistrictMode = DISTRICT_MODES.BASELINE;
+        let districtModeConfig = {};
+        let incomeLegendRanges = [];
+        const legendCells = [];
+        const selectedLegendColors = new Set();
+        const amenityLayerConfigs = {};
+        const amenityLayers = [];
+        let includeParksInCalculations = true;
+        function resolveModeConfig(mode) {
+          const holder = districtModeConfig[mode];
+          if (!holder) return null;
+          return includeParksInCalculations ? holder.include : holder.exclude;
+        }
+        function updateLegendForMode(mode) {
+          const config = resolveModeConfig(mode);
+          const legendTitleEl = document.getElementById("legend-title");
+          if (legendTitleEl) {
+            legendTitleEl.textContent = "District Classification";
+          }
+
+          const accessDetailEl = document.getElementById(
+            "access-tertile-detail"
+          );
+          const accessLabels =
+            mode === DISTRICT_MODES.ISOLATION
+              ? [
+                  "Longest avg minutes (isolated POIs removed)",
+                  "Medium avg minutes (isolated POIs removed)",
+                  "Shortest avg minutes (isolated POIs removed)",
+                ]
+              : ACCESS_LABELS;
+          const accessTitleEl = document.getElementById("access-tertile-title");
+          if (accessTitleEl) {
+            accessTitleEl.textContent =
+              mode === DISTRICT_MODES.ISOLATION
+                ? "Accessibility (avg min, isolated POIs removed)"
+                : "Accessibility (avg min, all amenity types)";
+          }
+          const accessNoteEl = document.querySelector(".legend-access-note");
+          if (accessNoteEl) {
+            accessNoteEl.textContent = "Better access ↑";
+          }
+          if (accessDetailEl) {
+            const lines =
+              config?.legend &&
+              config.legend.lines &&
+              config.legend.lines.length
+                ? config.legend.lines
+                : ["n/a"];
+            accessDetailEl.replaceChildren(
+              ...lines.map((line) => {
+                const span = document.createElement("div");
+                span.textContent = line;
+                return span;
+              })
+            );
+          }
+
+          legendCells.forEach(({ element, accessIndex, incomeIndex }) => {
+            if (!element) return;
+            const incomeEntry = incomeLegendRanges?.[incomeIndex]?.text || "";
+            const accessRanges = config?.legend?.ranges || [];
+            const accessEntry = accessRanges?.[2 - accessIndex]?.text || "";
+            const tooltip = `${INCOME_LABELS[incomeIndex]} ${
+              incomeEntry ? `(${incomeEntry})` : ""
+            }, ${accessLabels[accessIndex]} ${
+              accessEntry ? `(${accessEntry})` : ""
+            }`.trim();
+            element.title = tooltip;
+            element.setAttribute("aria-label", tooltip);
+          });
+          applyLegendSelectionStyles();
+        }
+
+        function getSelectedLegendColors() {
+          return Array.from(selectedLegendColors);
+        }
+
+        function applyLegendSelectionStyles() {
+          legendCells.forEach(({ element, color }) => {
+            if (!element) return;
+            const isSelected = color && selectedLegendColors.has(color);
+            element.style.cursor = "pointer";
+            element.style.outline = isSelected ? "2px solid #000000" : "";
+            element.style.boxShadow = isSelected
+              ? "0 0 0 2px rgba(0,0,0,0.35) inset"
+              : "";
+            element.setAttribute(
+              "aria-pressed",
+              isSelected ? "true" : "false"
+            );
+          });
+        }
+
+        function applyDistrictPaint(config) {
+          if (!config || !map.getLayer("kvarter-fill")) return;
+          const colorProp = config.colorProperty;
+          if (!colorProp) return;
+          const baseColorExpr = ["coalesce", ["get", colorProp], "#cccccc"];
+          const baseOpacity = 0.65;
+          const hasSelection = selectedLegendColors.size > 0;
+          const selected = hasSelection ? getSelectedLegendColors() : [];
+          const fillColorExpr = hasSelection
+            ? [
+                "case",
+                ["in", ["coalesce", ["get", colorProp], ""], ["literal", selected]],
+                baseColorExpr,
+                "#e0e0e0",
+              ]
+            : baseColorExpr;
+          const fillOpacityExpr = hasSelection
+            ? [
+                "case",
+                ["in", ["coalesce", ["get", colorProp], ""], ["literal", selected]],
+                baseOpacity,
+                0.2,
+              ]
+            : baseOpacity;
+          map.setPaintProperty("kvarter-fill", "fill-color", fillColorExpr);
+          map.setPaintProperty("kvarter-fill", "fill-opacity", fillOpacityExpr);
+        }
+
+        function applyDistrictMode(mode) {
+          const resolved =
+            mode === DISTRICT_MODES.ISOLATION
+              ? DISTRICT_MODES.ISOLATION
+              : DISTRICT_MODES.BASELINE;
+          currentDistrictMode = resolved;
+          const config = resolveModeConfig(resolved);
+          applyDistrictPaint(config);
+          updateLegendForMode(resolved);
+          applyAmenityStyle(resolved);
+        }
+
+        const districtModeRadios = document.querySelectorAll(
+          "input[name='district-mode']"
+        );
+        districtModeRadios.forEach((radio) => {
+          radio.addEventListener("change", () => {
+            if (radio.checked) {
+              applyDistrictMode(radio.value);
+            }
+          });
+        });
+        const initialModeRadio = document.querySelector(
+          "input[name='district-mode']:checked"
+        );
+        applyDistrictMode(initialModeRadio?.value || currentDistrictMode);
+
+        const parksCalcToggle = document.getElementById(
+          "toggle-include-parks-calcs"
+        );
+        if (parksCalcToggle) {
+          parksCalcToggle.addEventListener("change", () => {
+            includeParksInCalculations = parksCalcToggle.checked;
+            applyDistrictMode(currentDistrictMode);
+            applyParksLayerVisibility();
+          });
+        }
+
+        function quantileFromSorted(sorted, q) {
+          if (!sorted.length) return NaN;
+          const pos = (sorted.length - 1) * q;
+          const base = Math.floor(pos);
+          const rest = pos - base;
+          const baseVal = sorted[base];
+          if (base === sorted.length - 1 || rest === 0) {
+            return baseVal;
+          }
+          return baseVal + rest * (sorted[base + 1] - baseVal);
+        }
+
+        function computeTertileBreaks(values) {
+          const filtered = values
+            .map((v) => Number(v))
+            .filter((v) => Number.isFinite(v))
+            .sort((a, b) => a - b);
+          if (!filtered.length) return null;
+          return [
+            quantileFromSorted(filtered, 1 / 3),
+            quantileFromSorted(filtered, 2 / 3),
+          ];
+        }
+
+        function computeIncomeBreaks(values) {
+          const filtered = values
+            .map((v) => Number(v))
+            .filter((v) => Number.isFinite(v))
+            .sort((a, b) => a - b);
+          if (!filtered.length) return null;
+          return [
+            quantileFromSorted(filtered, 1 / 3),
+            quantileFromSorted(filtered, 2 / 3),
+          ];
+        }
+
+        function computeAccessBreaks(values) {
+          const filtered = values
+            .map((v) => Number(v))
+            .filter((v) => Number.isFinite(v))
+            .sort((a, b) => a - b);
+          if (!filtered.length) return null;
+          return [
+            quantileFromSorted(filtered, 1 / 3),
+            quantileFromSorted(filtered, 2 / 3),
+          ];
+        }
+
+        function classifyTertile(value, breaks) {
+          if (
+            typeof value !== "number" ||
+            !Number.isFinite(value) ||
+            !Array.isArray(breaks) ||
+            breaks.length < 2
+          ) {
+            return null;
+          }
+          if (value < breaks[0]) return 0;
+          if (value < breaks[1]) return 1;
+          return 2;
+        }
+
+        function classifyAccessibility(value, breaks) {
+          if (
+            typeof value !== "number" ||
+            !Number.isFinite(value) ||
+            !Array.isArray(breaks) ||
+            breaks.length < 2
+          ) {
+            return null;
+          }
+          if (value <= breaks[0]) return 2;
+          if (value <= breaks[1]) return 1;
+          return 0;
+        }
+
+        function resolveBivariateColor(accessClass, incomeClass) {
+          if (
+            typeof accessClass !== "number" ||
+            typeof incomeClass !== "number" ||
+            !Number.isInteger(accessClass) ||
+            !Number.isInteger(incomeClass) ||
+            accessClass < 0 ||
+            incomeClass < 0
+          ) {
+            return "#cccccc";
+          }
+          const rows = BIVARIATE_COLORS[accessClass];
+          if (!rows || incomeClass >= rows.length) {
+            return "#cccccc";
+          }
+          return rows[incomeClass] || "#cccccc";
+        }
+
+        function describeTertiles(
+          breaks,
+          {
+            decimals = 0,
+            lowLabel = "Lowest",
+            midLabel = "Medium",
+            highLabel = "Highest",
+            rangeSeparator = "–",
+            percentileNotes: customPercentileNotes,
+          } = {}
+        ) {
+          if (
+            !breaks ||
+            breaks.length < 2 ||
+            breaks.some((v) => !Number.isFinite(v))
+          ) {
+            return { text: "n/a", ranges: [] };
+          }
+          const percentileNotes =
+            Array.isArray(customPercentileNotes) &&
+            customPercentileNotes.length === 3
+              ? customPercentileNotes
+              : ["≤ 33rd percentile", "33rd–66th percentile", "> 66th percentile"];
+          const formatter = new Intl.NumberFormat("en-US", {
+            minimumFractionDigits: decimals,
+            maximumFractionDigits: decimals,
+          });
+          const lower = formatter.format(breaks[0]);
+          const upper = formatter.format(breaks[1]);
+          return {
+            lines: [
+              `${lowLabel}: ≤ ${lower} (${percentileNotes[0]})`,
+              `${midLabel}: ${lower}${rangeSeparator}${upper} (${percentileNotes[1]})`,
+              `${highLabel}: > ${upper} (${percentileNotes[2]})`,
+            ],
+            ranges: [
+              { label: lowLabel, text: `≤ ${lower} (${percentileNotes[0]})` },
+              {
+                label: midLabel,
+                text: `${lower}${rangeSeparator}${upper} (${percentileNotes[1]})`,
+              },
+              { label: highLabel, text: `> ${upper} (${percentileNotes[2]})` },
+            ],
+          };
+        }
+
+        function safeAverage(values = []) {
+          if (!Array.isArray(values) || !values.length) return null;
+          const sum = values.reduce((acc, val) => acc + val, 0);
+          return sum / values.length;
+        }
+
+        function computeDistrictAccessSummary(
+          props = {},
+          mode = DISTRICT_MODES.BASELINE,
+          {
+            excludeCategories = [],
+            meanProp,
+            medianProp,
+          } = {}
+        ) {
+          const suffix = mode === DISTRICT_MODES.ISOLATION ? "_iso" : "";
+          const excludeSet = new Set(
+            Array.isArray(excludeCategories)
+              ? excludeCategories
+              : [excludeCategories]
+          );
+          const allowBaselineFallback =
+            mode !== DISTRICT_MODES.ISOLATION && excludeSet.size === 0;
+          const meanKeyOverride =
+            meanProp ??
+            (excludeSet.size === 0
+              ? `mean_node_avg_min_to_categories${suffix}`
+              : mode === DISTRICT_MODES.ISOLATION
+              ? "mean_node_avg_min_to_categories_iso_no_parks"
+              : "mean_node_avg_min_to_categories_no_parks");
+          const medianKeyOverride =
+            medianProp ??
+            (excludeSet.size === 0
+              ? `median_node_avg_min_to_categories${suffix}`
+              : mode === DISTRICT_MODES.ISOLATION
+              ? "median_node_avg_min_to_categories_iso_no_parks"
+              : "median_node_avg_min_to_categories_no_parks");
+          const directMean = Number(props[meanKeyOverride]);
+          const directMedian = Number(props[medianKeyOverride]);
+          const meanSamples = [];
+          const medianSamples = [];
+          DISTRICT_CATEGORY_KEYS.forEach((key) => {
+            if (excludeSet.has(key)) return;
+            const meanKey = `mean_${key}${suffix}`;
+            const medianKey = `median_${key}${suffix}`;
+            const vMean = Number(props[meanKey]);
+            if (Number.isFinite(vMean)) meanSamples.push(vMean);
+            const vMedian = Number(props[medianKey]);
+            if (Number.isFinite(vMedian)) medianSamples.push(vMedian);
+          });
+          const fallbackMean = safeAverage(meanSamples);
+          const fallbackMedian = safeAverage(medianSamples);
+          const fallbackMeanAll =
+            excludeSet.size === 0
+              ? Number(props[`mean_min_to_all_pois${suffix}`])
+              : NaN;
+          const fallbackMedianAll =
+            excludeSet.size === 0
+              ? Number(props[`median_min_to_all_pois${suffix}`])
+              : NaN;
+          return {
+            mean: Number.isFinite(directMean)
+              ? directMean
+              : Number.isFinite(fallbackMean)
+              ? fallbackMean
+              : Number.isFinite(fallbackMeanAll)
+              ? fallbackMeanAll
+              : allowBaselineFallback
+              ? Number(props.mean_min_to_all_pois)
+              : null,
+            median: Number.isFinite(directMedian)
+              ? directMedian
+              : Number.isFinite(fallbackMedian)
+              ? fallbackMedian
+              : Number.isFinite(fallbackMedianAll)
+              ? fallbackMedianAll
+              : allowBaselineFallback
+              ? Number(props.median_min_to_all_pois)
+              : null,
+          };
+        }
+
+        // I'm fetching the raw amenity GeoJSON up front so I can do client-side nearest-neighbor lookups later.
+        let amenitiesFeatures = [];
+        const CACHE_TOKEN = Date.now().toString();
+        const LOW_POP_SOURCE_ID = "low_pop_nodes";
+        const LOW_POP_LAYER_ID = "low-pop-nodes";
+        const amenitiesPromise = fetch(
+          `poi_accessibility_output.geojson?cb=${CACHE_TOKEN}`
+        )
+          .then((resp) => resp.json())
+          .then((data) => {
+            amenitiesFeatures = data.features || [];
+            return amenitiesFeatures;
+          })
+          .catch((err) => {
+            console.error("Failed to load amenities for distance lookup", err);
+            amenitiesFeatures = [];
+            return amenitiesFeatures;
+          });
+
+        // I'm also loading the precomputed network travel times so I can show true walk-network minutes in popups.
+        let networkAccessState = null;
+        const networkAccessPromise = fetch(
+          `node_accessibility_output.json?cb=${CACHE_TOKEN}`
+        )
+          .then((resp) => resp.json())
+          .then((json) => {
+            const prepared = prepareNetworkAccessState(json);
+            if (!prepared) {
+              console.warn(
+                "Network access dataset missing columns; falling back to straight-line calculations."
+              );
+              return null;
+            }
+            networkAccessState = prepared;
+            return prepared;
+          })
+          .catch((err) => {
+            console.warn(
+              "Could not load network access dataset; falling back to straight-line calculations.",
+              err
+            );
+            networkAccessState = null;
+            return null;
+          });
+
+        // I'm registering the same GeoJSON with Mapbox so I can draw the amenity points as styled layers.
+        map.addSource("amenities", {
+          type: "geojson",
+          data: "poi_accessibility_output.geojson", // <-- enriched points file
+        });
+        // Low-population overlay for greying out sparse-demand areas.
+        map.addSource(LOW_POP_SOURCE_ID, {
+          type: "geojson",
+          data: `low_population_overlay_output.geojson?cb=${CACHE_TOKEN}`,
+        });
+
+        // I'm diving into the amenity point layers here so everything stays grouped.
+        // I'm wrapping layer creation in a helper so I can reuse the same styling for each amenity type.
+        function addCircleLayer(id, filter, color) {
+          amenityLayerConfigs[id] = { color };
+          if (!amenityLayers.includes(id)) {
+            amenityLayers.push(id);
+          }
+          map.addLayer({
+            id,
+            type: "circle",
+            source: "amenities",
+            filter: ["all", ["==", ["geometry-type"], "Point"], filter],
+            paint: {
+              "circle-radius": 5,
+              "circle-stroke-width": 1,
+              "circle-stroke-color": "#ffffff",
+              "circle-color": color,
+              "circle-opacity": 0.9,
+              "circle-stroke-opacity": 1.0,
+            },
+          });
+        }
+
+        // I'm grouping the food and retail layers together for readability.
+        // I'm adding food & drink venues so I can see where daily options cluster.
+        addCircleLayer(
+          "cafes_restaurants",
+          [
+            "match",
+            ["get", "amenity"],
+            ["cafe", "restaurant", "fast_food", "bar", "pub"],
+            true,
+            false,
+          ],
+          "#c0392b"
+        );
+        // I'm mapping supermarkets separately because they matter for everyday errands.
+        addCircleLayer(
+          "supermarkets",
+          [
+            "match",
+            ["get", "shop"],
+            ["supermarket", "convenience"],
+            true,
+            false,
+          ],
+          "#8e44ad"
+        );
+
+        // I'm switching to the education amenities next.
+        // I'm bundling the major education amenities so I can gauge school coverage.
+        addCircleLayer(
+          "education",
+          [
+            "match",
+            ["get", "amenity"],
+            ["school", "kindergarten", "university", "college"],
+            true,
+            false,
+          ],
+          "#2980b9"
+        );
+
+        // I'm defining the health layers right after education to keep things tidy.
+        // I'm grouping health services together so I can eyeball medical accessibility.
+        addCircleLayer(
+          "health",
+          [
+            "match",
+            ["get", "amenity"],
+            ["hospital", "clinic", "pharmacy", "doctors", "dentist"],
+            true,
+            false,
+          ],
+          "#e84393"
+        );
+
+        // Cultural venues (museums, cinemas, theatres, arts venues).
+        addCircleLayer(
+          "culture",
+          [
+            "any",
+            [
+              "match",
+              ["get", "amenity"],
+              ["cinema", "theatre", "arts_centre"],
+              true,
+              false,
+            ],
+            [
+              "match",
+              ["get", "tourism"],
+              ["museum", "gallery"],
+              true,
+              false,
+            ],
+          ],
+          "#000000"
+        );
+
+        // I'm handling the green and recreation layers here.
+        // I'm highlighting parks to understand green space distribution, but I only want named parks.
+        addCircleLayer(
+          "parks",
+          [
+            "all",
+            ["==", ["get", "leisure"], "park"],
+            ["has", "name"],
+            ["!=", ["coalesce", ["get", "name"], ""], ""],
+          ],
+          "#27ae60"
+        );
+        // I'm keeping playgrounds on their own layer so family-friendly spots pop out.
+        addCircleLayer(
+          "playgrounds",
+          ["==", ["get", "leisure"], "playground"],
+          "#8e6b3a"
+        );
+
+        // I'm adding the public transport layer at the end because it's an extra network overlay.
+        // I'm capturing stop positions and platforms so I get a sense of transit reach.
+        addCircleLayer(
+          "pt_stops",
+          [
+            "match",
+            ["get", "public_transport"],
+            ["stop_position", "platform"],
+            true,
+            false,
+          ],
+          "#f39c12"
+        );
+
+        function applyAmenityStyle(mode) {
+          const isolationMode = mode === DISTRICT_MODES.ISOLATION;
+          amenityLayers.forEach((layerId) => {
+            const config = amenityLayerConfigs[layerId];
+            if (!config || !map.getLayer(layerId)) return;
+            const baseColor = config.color;
+            const colorExpr = isolationMode
+              ? [
+                  "case",
+                  ["boolean", ["get", "is_isolated"], false],
+                  ISOLATED_COLOR,
+                  baseColor,
+                ]
+              : baseColor;
+            const opacityExpr = isolationMode
+              ? ["case", ["boolean", ["get", "is_isolated"], false], 0.65, 0.9]
+              : 0.9;
+            const strokeOpacityExpr = isolationMode
+              ? ["case", ["boolean", ["get", "is_isolated"], false], 0.7, 1.0]
+              : 1.0;
+            map.setPaintProperty(layerId, "circle-color", colorExpr);
+            map.setPaintProperty(layerId, "circle-opacity", opacityExpr);
+            map.setPaintProperty(
+              layerId,
+              "circle-stroke-opacity",
+              strokeOpacityExpr
+            );
+          });
+        }
+        // I'm toggling the pointer cursor so it's obvious that the points are clickable.
+        amenityLayers.forEach((id) => {
+          map.on(
+            "mouseenter",
+            id,
+            () => (map.getCanvas().style.cursor = "pointer")
+          );
+          map.on("mouseleave", id, () => (map.getCanvas().style.cursor = ""));
+        });
+
+        // I'm keeping a label lookup so any UI I add later can reuse consistent names.
+        const layerLabels = {
+          cafes_restaurants: "Food & Drink",
+          supermarkets: "Supermarkets",
+          education: "Education",
+          health: "Health",
+          culture: "Culture",
+          parks: "Parks",
+          playgrounds: "Playgrounds",
+          pt_stops: "Public Transport Stops",
+        };
+
+        const parksCheckbox = document.getElementById("toggle-parks");
+        function applyParksLayerVisibility() {
+          const shouldShow =
+            includeParksInCalculations &&
+            (parksCheckbox ? parksCheckbox.checked : true);
+          if (map.getLayer("parks")) {
+            map.setLayoutProperty(
+              "parks",
+              "visibility",
+              shouldShow ? "visible" : "none"
+            );
+          }
+        }
+
+        // I'm wiring the checkboxes directly to each amenity layer's visibility.
+        // I'm pairing the checkbox ids with their Mapbox layer ids so I can iterate instead of wiring each manually.
+        const amenityToggles = [
+          ["toggle-cafes_restaurants", "cafes_restaurants"],
+          ["toggle-supermarkets", "supermarkets"],
+          ["toggle-education", "education"],
+          ["toggle-health", "health"],
+          ["toggle-culture", "culture"],
+          ["toggle-parks", "parks"],
+          ["toggle-playgrounds", "playgrounds"],
+          ["toggle-pt_stops", "pt_stops"],
+        ];
+        amenityToggles.forEach(([cbId, layerId]) => {
+          const cb = document.getElementById(cbId);
+          if (!cb) return;
+          // I'm spreading the toggle logic into a tiny helper so it runs on load and on checkbox changes.
+          const apply = () => {
+            if (layerId === "parks") {
+              applyParksLayerVisibility();
+              return;
+            }
+            if (map.getLayer(layerId)) {
+              map.setLayoutProperty(
+                layerId,
+                "visibility",
+                cb.checked ? "visible" : "none"
+              );
+            }
+          };
+          cb.addEventListener("change", apply);
+          apply();
+        });
+
+        // Ensure parks visibility respects the "Include Green Areas" toggle on initial load.
+        applyParksLayerVisibility();
+
+        applyAmenityStyle(currentDistrictMode);
+
+        const searchInput = document.getElementById("poi-search");
+        const searchResultsEl = document.getElementById("poi-search-results");
+        const searchContainer = document.getElementById("poi-search-container");
+        const MAX_SEARCH_RESULTS = 8;
+        let searchEntries = [];
+        let focusAmenityFeatureImpl = null;
+        let pendingFocusFeature = null;
+        let districtDataPromise = null;
+        let awaitingFocusReady = false;
+
+        function normaliseSearchText(value) {
+          return typeof value === "string"
+            ? value.toLowerCase().trim()
+            : value != null
+            ? String(value).toLowerCase().trim()
+            : "";
+        }
+
+        function describeCategories(ids = []) {
+          if (!Array.isArray(ids) || !ids.length) return "";
+          return ids
+            .map((id) => layerLabels[id] || id)
+            .filter((label) => label && label.trim().length > 0)
+            .join(", ");
+        }
+
+        function buildSearchEntries(features = []) {
+          const entries = [];
+          const dedupe = new Set();
+          features.forEach((feature) => {
+            if (!feature || feature.geometry?.type !== "Point") return;
+            const props = feature.properties || {};
+            const name = fallbackPoiName(props);
+            const normalized = normaliseSearchText(name);
+            if (!normalized) return;
+            const coords = feature.geometry.coordinates;
+            if (!Array.isArray(coords) || coords.length < 2) return;
+            const signature = `${normalized}|${coords[0]}|${coords[1]}`;
+            if (dedupe.has(signature)) return;
+            dedupe.add(signature);
+            entries.push({
+              name,
+              searchName: normalized,
+              feature,
+            });
+          });
+          entries.sort((a, b) =>
+            a.name.localeCompare(b.name, "da", { sensitivity: "base" })
+          );
+          return entries;
+        }
+
+        function findSearchMatches(query) {
+          const normalized = normaliseSearchText(query);
+          if (!normalized) return [];
+          return searchEntries.filter((entry) =>
+            entry.searchName.includes(normalized)
+          );
+        }
+
+        function clearSearchResults() {
+          if (!searchResultsEl) return;
+          searchResultsEl.innerHTML = "";
+          searchResultsEl.style.display = "none";
+        }
+
+        function updateSearchResults(query) {
+          if (!searchResultsEl) return;
+          const trimmed = normaliseSearchText(query);
+          searchResultsEl.innerHTML = "";
+          if (!trimmed) {
+            searchResultsEl.style.display = "none";
+            return;
+          }
+          const matches = findSearchMatches(trimmed).slice(
+            0,
+            MAX_SEARCH_RESULTS
+          );
+          if (!matches.length) {
+            const empty = document.createElement("div");
+            empty.className = "poi-search-empty";
+            empty.textContent = "No matches";
+            searchResultsEl.appendChild(empty);
+            searchResultsEl.style.display = "block";
+            return;
+          }
+          matches.forEach((entry) => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "poi-search-result";
+            const categories = describeCategories(
+              entry.feature?.properties?.source_categories
+            );
+            button.textContent = categories
+              ? `${entry.name} · ${categories}`
+              : entry.name;
+            button.addEventListener("click", () => {
+              requestFocusOnAmenity(entry.feature);
+              clearSearchResults();
+              if (searchInput) {
+                searchInput.value = entry.name;
+                searchInput.blur();
+              }
+            });
+            searchResultsEl.appendChild(button);
+          });
+          searchResultsEl.style.display = "block";
+        }
+
+        function handleSearchSubmit(query) {
+          const matches = findSearchMatches(query);
+          if (!matches.length) {
+            updateSearchResults(query);
+            return;
+          }
+          const match = matches[0];
+          requestFocusOnAmenity(match.feature);
+          if (searchInput) {
+            searchInput.value = match.name;
+            searchInput.blur();
+          }
+          clearSearchResults();
+        }
+
+        function requestFocusOnAmenity(feature) {
+          if (!feature) return;
+          if (typeof focusAmenityFeatureImpl === "function") {
+            focusAmenityFeatureImpl(feature);
+            return;
+          }
+          pendingFocusFeature = feature;
+          if (
+            !awaitingFocusReady &&
+            districtDataPromise &&
+            typeof districtDataPromise.finally === "function"
+          ) {
+            awaitingFocusReady = true;
+            districtDataPromise.finally(() => {
+              awaitingFocusReady = false;
+              if (
+                pendingFocusFeature &&
+                typeof focusAmenityFeatureImpl === "function"
+              ) {
+                focusAmenityFeatureImpl(pendingFocusFeature);
+                pendingFocusFeature = null;
+              }
+            });
+          }
+        }
+
+        if (searchInput) {
+          searchInput.addEventListener("input", (event) => {
+            updateSearchResults(event.target.value);
+          });
+          searchInput.addEventListener("keydown", (event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              handleSearchSubmit(event.target.value);
+            } else if (event.key === "Escape") {
+              clearSearchResults();
+              event.target.select();
+            }
+          });
+          searchInput.addEventListener("focus", (event) => {
+            if (event.target.value) {
+              updateSearchResults(event.target.value);
+            }
+          });
+          searchInput.addEventListener("blur", () => {
+            // Delay so a click on a suggestion still registers.
+            setTimeout(() => {
+              const active = document.activeElement;
+              if (
+                searchContainer &&
+                active &&
+                searchContainer.contains(active)
+              ) {
+                return;
+              }
+              clearSearchResults();
+            }, 150);
+          });
+        }
+
+        if (searchContainer) {
+          document.addEventListener("click", (event) => {
+            if (!searchContainer.contains(event.target)) {
+              clearSearchResults();
+            }
+          });
+        }
+
+        amenitiesPromise.then((features) => {
+          searchEntries = buildSearchEntries(features);
+          if (searchInput && searchInput.value) {
+            updateSearchResults(searchInput.value);
+          }
+          return features;
+        });
+
+        // I'm using a fallback name helper so unnamed POIs still show something readable in popups.
+        function fallbackPoiName(props = {}) {
+          const candidates = [
+            props.name,
+            props.amenity,
+            props.leisure,
+            props.shop,
+            props.public_transport,
+          ];
+          const pick = candidates.find(
+            (value) => value != null && String(value).trim().length > 0
+          );
+          return pick ? String(pick) : "(unnamed)";
+        }
+
+        // I'm generating a stable id per feature so I can avoid counting the clicked point in nearest searches.
+        function featureId(feat) {
+          const props = feat.properties || {};
+          return (
+            props.osm_id ??
+            props.id ??
+            feat.id ??
+            `${feat.geometry?.coordinates?.[0]},${feat.geometry?.coordinates?.[1]}`
+          );
+        }
+
+        // I'm calculating straight-line distances with Turf - quick and runs entirely client-side.
+        function straightLineDistanceMeters(origin, target) {
+          if (
+            !Array.isArray(origin) ||
+            !Array.isArray(target) ||
+            origin.length < 2 ||
+            target.length < 2
+          ) {
+            return null;
+          }
+          try {
+            const p1 = turf.point(origin);
+            const p2 = turf.point(target);
+            return turf.distance(p1, p2, { units: "meters" });
+          } catch (err) {
+            console.error("Failed to compute distance with Turf", err);
+            return null;
+          }
+        }
+
+        // I'm formatting meters with a friendly string so the popups are easy to read.
+        function formatMeters(meters) {
+          if (
+            meters == null ||
+            Number.isNaN(meters) ||
+            !Number.isFinite(meters)
+          ) {
+            return "–";
+          }
+          if (meters >= 1000) {
+            return `${(meters / 1000).toFixed(2)} km`;
+          }
+          return `${meters.toFixed(0)} m`;
+        }
+
+        // I'm formatting minutes with one decimal so the numbers are readable but not too noisy.
+        function formatMinutes(value) {
+          if (value == null || Number.isNaN(value)) return "–";
+          return Number(value).toFixed(1);
+        }
+
+        function formatPopulation(value) {
+          if (!Number.isFinite(value)) return "–";
+          return POPULATION_FORMATTER.format(Math.round(value));
+        }
+
+        function buildPopulationSummary(props = {}) {
+          const rawPop = Number(
+            props.amenity_pop_at_location ??
+              props.population_within_radius ??
+              props.population ?? // fallback for legacy naming
+              NaN
+          );
+          const radiusMeters = Number(
+            props.population_radius_m ??
+              props.population_radius ??
+              props.populationRadius ??
+              NaN
+          );
+          const threshold = Number(
+            props.population_isolation_threshold ??
+              props.populationIsolationThreshold ??
+              NaN
+          );
+          const isoProp = props.is_isolated;
+          const isolationStatus =
+            isoProp === true ? true : isoProp === false ? false : null;
+
+          const radiusText = Number.isFinite(radiusMeters)
+            ? formatMeters(radiusMeters)
+            : null;
+          const popText = Number.isFinite(rawPop)
+            ? formatPopulation(rawPop)
+            : null;
+          const thresholdText = Number.isFinite(threshold)
+            ? formatPopulation(threshold)
+            : null;
+
+          const lines = [];
+          if (popText) {
+            lines.push(`Nearby population: <b>${popText}</b>`);
+          }
+          if (!popText) {
+            lines.push("Nearby population: data unavailable");
+          }
+
+          let statusLine =
+            'Status: <span style="color:#555;">Not classified</span>';
+          if (isolationStatus === true) {
+            statusLine = `<span style="color:#c0392b;font-weight:600">Isolated amenity</span>`;
+            if (thresholdText) {
+              statusLine += ` (threshold ${thresholdText})`;
+            }
+            statusLine = `Status: ${statusLine}`;
+          } else if (isolationStatus === false) {
+            statusLine = `<span style="color:#2c662d;font-weight:600">Serves local demand</span>`;
+            if (thresholdText) {
+              statusLine += ` (threshold ${thresholdText})`;
+            }
+            statusLine = `Status: ${statusLine}`;
+          } else if (thresholdText) {
+            statusLine = `Isolation threshold: ${thresholdText}`;
+          }
+          lines.push(statusLine);
+
+          return `
+            <div style="margin-top:6px">
+              <div style="font-weight:600">Nearby population</div>
+              ${lines.join("<br/>")}
+            </div>
+          `;
+        }
+
+        // I'm defining category matchers so each metric knows which amenities to look for.
+        const CATEGORY_MATCHERS = {
+          min_to_cafes_restaurants: (props) =>
+            ["cafe", "restaurant"].includes(props?.amenity),
+          min_to_supermarkets: (props) => props?.shop === "supermarket",
+          min_to_education: (props) =>
+            ["school", "kindergarten", "university", "college"].includes(
+              props?.amenity
+            ),
+          min_to_health: (props) =>
+            ["hospital", "clinic", "pharmacy", "doctors", "dentist"].includes(
+              props?.amenity
+            ),
+          min_to_culture: (props) => {
+            const a = props?.amenity;
+            const t = props?.tourism;
+            return (
+              (a && ["cinema", "theatre", "arts_centre"].includes(a)) ||
+              (t && ["museum", "gallery"].includes(t))
+            );
+          },
+          min_to_parks: (props) =>
+            props?.leisure === "park" || props?.amenity === "park",
+          min_to_playgrounds: (props) => props?.leisure === "playground",
+          min_to_pt_stops: (props) =>
+            ["stop_position", "platform"].includes(props?.public_transport),
+        };
+
+        // I'm walking through all amenities to find the closest match per category when someone clicks a point.
+        function findNearestByStraightLine(
+          categoryKey,
+          originCoords,
+          excludeId
+        ) {
+          const matchesCategory = CATEGORY_MATCHERS[categoryKey];
+          if (!matchesCategory || !Array.isArray(originCoords)) return null;
+          let closestAmenity = null;
+          let closestDistanceMeters = Infinity;
+
+          for (const candidateFeature of amenitiesFeatures) {
+            if (
+              !candidateFeature ||
+              candidateFeature.geometry?.type !== "Point"
+            )
+              continue;
+            const candidateProps = candidateFeature.properties || {};
+            if (!matchesCategory(candidateProps)) continue;
+            const candidateId = featureId(candidateFeature);
+            // I'm ignoring the clicked feature itself so I only compare against other amenities.
+            if (candidateId === excludeId) continue;
+            const candidateCoords = candidateFeature.geometry.coordinates;
+            const distanceMeters = straightLineDistanceMeters(
+              originCoords,
+              candidateCoords
+            );
+            if (distanceMeters == null || distanceMeters < 0) continue;
+            if (distanceMeters < closestDistanceMeters) {
+              closestDistanceMeters = distanceMeters;
+              closestAmenity = {
+                name: fallbackPoiName(candidateProps),
+                distance_m: distanceMeters,
+              };
+            }
+          }
+
+          if (!closestAmenity) return null;
+          return {
+            ...closestAmenity,
+            minutes: closestAmenity.distance_m / WALK_SPEED_M_PER_MIN,
+          };
+        }
+
+        // I'm validating and indexing the network accessibility dataset so lookups stay fast.
+        function prepareNetworkAccessState(json) {
+          if (
+            !json ||
+            !Array.isArray(json.columns) ||
+            !Array.isArray(json.data)
+          ) {
+            return null;
+          }
+          const index = {};
+          json.columns.forEach((name, idx) => {
+            index[name] = idx;
+          });
+          if (
+            !Number.isInteger(index.x) ||
+            !Number.isInteger(index.y) ||
+            index.x < 0 ||
+            index.y < 0
+          ) {
+            return null;
+          }
+          const minutesIndices = {};
+          const distanceIndices = {};
+          NETWORK_METRICS.forEach(([key]) => {
+            const base = key.replace("min_to_", "");
+            const baseKey = key;
+            const isoKey = `${key}_iso`;
+            const distanceKey = `nearest_poi_${base}_dist_m`;
+            const distanceIsoKey = `nearest_poi_${base}_iso_dist_m`;
+            minutesIndices[key] = {
+              baseline:
+                Number.isInteger(index[baseKey]) && index[baseKey] >= 0
+                  ? index[baseKey]
+                  : null,
+              isolation:
+                Number.isInteger(index[isoKey]) && index[isoKey] >= 0
+                  ? index[isoKey]
+                  : null,
+            };
+            distanceIndices[key] = {
+              baseline:
+                Number.isInteger(index[distanceKey]) && index[distanceKey] >= 0
+                  ? index[distanceKey]
+                  : null,
+              isolation:
+                Number.isInteger(index[distanceIsoKey]) &&
+                index[distanceIsoKey] >= 0
+                  ? index[distanceIsoKey]
+                  : null,
+            };
+          });
+          return {
+            data: json.data,
+            index,
+            xIndex: index.x,
+            yIndex: index.y,
+            minutesIndices,
+            distanceIndices,
+          };
+        }
+
+        // I'm scanning through the network node table to find the closest node to the click coordinate.
+        function nearestNetworkNodeIndex(coords) {
+          if (
+            !networkAccessState ||
+            !Array.isArray(coords) ||
+            coords.length < 2
+          ) {
+            return null;
+          }
+          const { data, xIndex, yIndex } = networkAccessState;
+          if (
+            xIndex == null ||
+            yIndex == null ||
+            !Array.isArray(data) ||
+            !data.length
+          ) {
+            return null;
+          }
+          const originX = coords[0];
+          const originY = coords[1];
+          let bestIdx = -1;
+          let bestScore = Infinity;
+          for (let i = 0; i < data.length; i += 1) {
+            const row = data[i];
+            const nodeX = row[xIndex];
+            const nodeY = row[yIndex];
+            if (
+              typeof nodeX !== "number" ||
+              Number.isNaN(nodeX) ||
+              typeof nodeY !== "number" ||
+              Number.isNaN(nodeY)
+            ) {
+              continue;
+            }
+            const dx = nodeX - originX;
+            const dy = nodeY - originY;
+            const score = dx * dx + dy * dy;
+            if (score < bestScore) {
+              bestScore = score;
+              bestIdx = i;
+            }
+          }
+          return bestIdx;
+        }
+
+        // Build isolation-based network minutes per category for a node click (no names/distances, iso values only).
+        function buildNodeIsoMetrics(originCoords) {
+          if (
+            !networkAccessState ||
+            !Array.isArray(networkAccessState.data) ||
+            !networkAccessState.data.length ||
+            !Array.isArray(originCoords) ||
+            originCoords.length < 2
+          ) {
+            return null;
+          }
+          const nodeIdx = nearestNetworkNodeIndex(originCoords);
+          if (nodeIdx == null || nodeIdx < 0) return null;
+          const row = networkAccessState.data[nodeIdx];
+          const items = NETWORK_METRICS.map(([key, label]) => {
+            const entry = networkAccessState.minutesIndices[key];
+            const isoIdx = entry && Number.isInteger(entry.isolation) ? entry.isolation : null;
+            const val =
+              isoIdx != null && isoIdx >= 0 && isoIdx < row.length ? row[isoIdx] : null;
+            return {
+              label,
+              value: typeof val === "number" && !Number.isNaN(val) ? val : null,
+            };
+          });
+          return items;
+        }
+
+        // I'm assembling human-readable markup for the network-based metrics using the closest network node.
+        function buildNetworkMetrics(originCoords, options = {}) {
+          if (
+            !networkAccessState ||
+            !Array.isArray(networkAccessState.data) ||
+            !networkAccessState.data.length
+          ) {
+            return null;
+          }
+          const overrideCoords =
+            Array.isArray(options.overrideCoords) &&
+            options.overrideCoords.length >= 2
+              ? options.overrideCoords
+              : null;
+          const effectiveOrigin = overrideCoords ?? originCoords;
+          const extraMinutes = Number(options.extraMinutes);
+          const extraMinutesValid =
+            Number.isFinite(extraMinutes) && extraMinutes > 0;
+          const categoryOverrides =
+            options &&
+            typeof options.categoryOverrides === "object" &&
+            options.categoryOverrides !== null
+              ? options.categoryOverrides
+              : null;
+          const label = extraMinutesValid
+            ? `Network minutes to nearest (includes extra ${formatMinutes(
+                extraMinutes
+              )} min)`
+            : "Network minutes to nearest";
+
+          const nodeIdx = nearestNetworkNodeIndex(effectiveOrigin);
+          if (nodeIdx == null || nodeIdx < 0) return null;
+          const row = networkAccessState.data[nodeIdx];
+          if (!row) return null;
+          let hasAny = false;
+          const useIsolation = currentDistrictMode === DISTRICT_MODES.ISOLATION;
+
+          const pickValue = (entry) => {
+            if (!entry) return { value: null, idx: null };
+            const tryIdx = (idx) =>
+              Number.isInteger(idx) && idx >= 0 && idx < row.length
+                ? row[idx]
+                : null;
+            if (useIsolation) {
+              const isoVal = tryIdx(entry.isolation);
+              if (typeof isoVal === "number" && !Number.isNaN(isoVal)) {
+                return { value: isoVal, idx: entry.isolation };
+              }
+            }
+            const baseVal = tryIdx(entry.baseline);
+            if (typeof baseVal === "number" && !Number.isNaN(baseVal)) {
+              return { value: baseVal, idx: entry.baseline };
+            }
+            return { value: null, idx: null };
+          };
+
+          const metricsHtml = NETWORK_METRICS.map(([key, label]) => {
+            const minutesResult = pickValue(
+              networkAccessState.minutesIndices[key]
+            );
+            const distanceResult = pickValue(
+              networkAccessState.distanceIndices[key]
+            );
+            const minutes = minutesResult.value;
+            const distanceMeters = distanceResult.value;
+            if (typeof minutes !== "number" || Number.isNaN(minutes)) {
+              return `<div>${label}: <b>–</b></div>`;
+            }
+            hasAny = true;
+            const details = [];
+            const nearestInfo = findNearestByStraightLine(
+              key,
+              effectiveOrigin,
+              null
+            );
+            if (
+              typeof distanceMeters === "number" &&
+              Number.isFinite(distanceMeters)
+            ) {
+              const distanceText = formatMeters(distanceMeters);
+              if (distanceText !== "–") {
+                details.push(`network distance: ${distanceText}`);
+              }
+            }
+            const overrideConfig =
+              categoryOverrides && categoryOverrides[key]
+                ? categoryOverrides[key]
+                : null;
+            const hasOverrideExtra =
+              overrideConfig && Object.prototype.hasOwnProperty.call(overrideConfig, "extraMinutes");
+            const overrideExtra = hasOverrideExtra
+              ? Number(overrideConfig.extraMinutes)
+              : null;
+            const overrideExtraValid =
+              hasOverrideExtra && Number.isFinite(overrideExtra) && overrideExtra > 0;
+            const categoryExtra =
+              hasOverrideExtra && !overrideExtraValid
+                ? null
+                : overrideExtra;
+            const extraForMetric =
+              hasOverrideExtra
+                ? categoryExtra
+                : extraMinutesValid
+                ? extraMinutes
+                : null;
+            const extraForMetricValid =
+              typeof extraForMetric === "number" && extraForMetric > 0;
+            const adjustedMinutes = extraForMetricValid
+              ? minutes + extraForMetric
+              : minutes;
+            const nearestText =
+              nearestInfo && nearestInfo.name
+                ? ` <span style="color:#555;">(${nearestInfo.name})</span>`
+                : "";
+            const extra = details.length
+              ? ` <span style="color:#555;">(${details.join(", ")})</span>`
+              : "";
+            return `<div>${label}: <b>${formatMinutes(
+              adjustedMinutes
+            )}</b>${nearestText}${extra}${
+              extraForMetricValid
+                ? ` <span style="color:#555;">(+${formatMinutes(
+                    extraForMetric
+                  )} min)</span>`
+                : ""
+            }</div>`;
+          }).join("");
+          if (!hasAny) {
+            return null;
+          }
+          return {
+            label,
+            html: metricsHtml,
+          };
+        }
+
+        // I'm keeping the straight-line fallback markup builder as a helper so I can reuse it when network data is missing.
+        function buildStraightLineMetricsHtml(
+          originCoords,
+          excludeId,
+          options = {}
+        ) {
+          const overrideCoords =
+            Array.isArray(options.overrideCoords) &&
+            options.overrideCoords.length >= 2
+              ? options.overrideCoords
+              : null;
+          const effectiveOrigin = overrideCoords ?? originCoords;
+          const extraMinutes = Number(options.extraMinutes);
+          const extraMinutesValid =
+            Number.isFinite(extraMinutes) && extraMinutes > 0;
+          const categoryOverrides =
+            options &&
+            typeof options.categoryOverrides === "object" &&
+            options.categoryOverrides !== null
+              ? options.categoryOverrides
+              : null;
+
+          return NETWORK_METRICS
+            .map(([key, label]) => {
+              const nearest = findNearestByStraightLine(
+                key,
+                effectiveOrigin,
+                excludeId
+              );
+              if (!nearest) {
+                return `<div>${label}: <b>–</b></div>`;
+              }
+              const details = [];
+              if (nearest.name) {
+                details.push(nearest.name);
+              }
+              const distanceText = formatMeters(nearest.distance_m);
+              if (distanceText !== "–") {
+                details.push(`distance: ${distanceText}`);
+              }
+              const overrideConfig =
+                categoryOverrides && categoryOverrides[key]
+                  ? categoryOverrides[key]
+                  : null;
+              const hasOverrideExtra =
+                overrideConfig &&
+                Object.prototype.hasOwnProperty.call(
+                  overrideConfig,
+                  "extraMinutes"
+                );
+              const overrideExtra = hasOverrideExtra
+                ? Number(overrideConfig.extraMinutes)
+                : null;
+              const overrideExtraValid =
+                hasOverrideExtra &&
+                Number.isFinite(overrideExtra) &&
+                overrideExtra > 0;
+              const categoryExtra =
+                hasOverrideExtra && !overrideExtraValid
+                  ? null
+                  : overrideExtra;
+              const extraForMetric =
+                hasOverrideExtra
+                  ? categoryExtra
+                  : extraMinutesValid
+                  ? extraMinutes
+                  : null;
+              const extraForMetricValid =
+                typeof extraForMetric === "number" && extraForMetric > 0;
+              const extra = details.length
+                ? ` <span style="color:#555;">(${details.join(", ")})</span>`
+                : "";
+              const adjustedMinutes = extraForMetricValid
+                ? nearest.minutes + extraForMetric
+                : nearest.minutes;
+              const extraNote = extraForMetricValid
+                ? ` <span style="color:#555;">(+${formatMinutes(
+                    extraForMetric
+                  )} min)</span>`
+                : "";
+              return `<div>${label}: <b>${formatMinutes(
+                adjustedMinutes
+              )}</b>${extra}${extraNote}</div>`;
+            })
+            .join("");
+        }
+
+        // I'm using the district polygons (kvarter) with their income + accessibility stats next.
+        // I'm expecting the helper script to have produced district_income_access_output.geojson in the same folder.
+        // I'm fetching the district polygons so I can shade them by socio-economic data.
+        districtDataPromise = Promise.all([
+          fetch(`district_income_access_output.geojson?cb=${CACHE_TOKEN}`).then(
+            (r) => r.json()
+          ),
+          amenitiesPromise,
+        ]);
+        districtDataPromise
+          .then(([kvarterData]) => {
+            const features = (kvarterData && kvarterData.features) || [];
+            const incomeValues = [];
+            const baselineAccessValuesInclude = [];
+            const baselineAccessValuesExclude = [];
+            const isolationAccessValuesInclude = [];
+            const isolationAccessValuesExclude = [];
+            const excludeParkCategories = [PARK_METRIC_KEY];
+
+            const enrichedFeatures = features.map((feature) => {
+              const originalProps = feature.properties || {};
+              const props = { ...originalProps };
+              const income = Number(props.median_income_dkk);
+              if (Number.isFinite(income)) incomeValues.push(income);
+
+              const baselineSummaryInclude = computeDistrictAccessSummary(
+                props,
+                DISTRICT_MODES.BASELINE
+              );
+              const baselineSummaryExclude = computeDistrictAccessSummary(
+                props,
+                DISTRICT_MODES.BASELINE,
+                { excludeCategories: excludeParkCategories }
+              );
+              const isolationSummaryInclude = computeDistrictAccessSummary(
+                props,
+                DISTRICT_MODES.ISOLATION
+              );
+              const isolationSummaryExclude = computeDistrictAccessSummary(
+                props,
+                DISTRICT_MODES.ISOLATION,
+                { excludeCategories: excludeParkCategories }
+              );
+
+              if (Number.isFinite(baselineSummaryInclude.mean)) {
+                baselineAccessValuesInclude.push(baselineSummaryInclude.mean);
+              } else {
+                const fallbackBaseline = Number(props.median_min_to_all_pois);
+                if (Number.isFinite(fallbackBaseline)) {
+                  baselineAccessValuesInclude.push(fallbackBaseline);
+                }
+              }
+
+              if (Number.isFinite(baselineSummaryExclude.mean)) {
+                baselineAccessValuesExclude.push(baselineSummaryExclude.mean);
+              }
+
+              if (Number.isFinite(isolationSummaryInclude.mean)) {
+                isolationAccessValuesInclude.push(isolationSummaryInclude.mean);
+              } else {
+                const fallbackIso = Number(props.median_min_to_all_pois_iso);
+                if (Number.isFinite(fallbackIso)) {
+                  isolationAccessValuesInclude.push(fallbackIso);
+                }
+              }
+
+              if (Number.isFinite(isolationSummaryExclude.mean)) {
+                isolationAccessValuesExclude.push(isolationSummaryExclude.mean);
+              }
+
+              return {
+                ...feature,
+                properties: {
+                  ...props,
+                  _access_summary_baseline_mean: Number.isFinite(
+                    baselineSummaryInclude.mean
+                  )
+                    ? baselineSummaryInclude.mean
+                    : null,
+                  _access_summary_baseline_mean_no_parks: Number.isFinite(
+                    baselineSummaryExclude.mean
+                  )
+                    ? baselineSummaryExclude.mean
+                    : null,
+                  _access_summary_baseline_median: Number.isFinite(
+                    baselineSummaryInclude.median
+                  )
+                    ? baselineSummaryInclude.median
+                    : null,
+                  _access_summary_baseline_median_no_parks: Number.isFinite(
+                    baselineSummaryExclude.median
+                  )
+                    ? baselineSummaryExclude.median
+                    : null,
+                  _access_summary_isolation_mean: Number.isFinite(
+                    isolationSummaryInclude.mean
+                  )
+                    ? isolationSummaryInclude.mean
+                    : null,
+                  _access_summary_isolation_mean_no_parks: Number.isFinite(
+                    isolationSummaryExclude.mean
+                  )
+                    ? isolationSummaryExclude.mean
+                    : null,
+                  _access_summary_isolation_median: Number.isFinite(
+                    isolationSummaryInclude.median
+                  )
+                    ? isolationSummaryInclude.median
+                    : null,
+                  _access_summary_isolation_median_no_parks: Number.isFinite(
+                    isolationSummaryExclude.median
+                  )
+                    ? isolationSummaryExclude.median
+                    : null,
+                },
+              };
+            });
+
+            const incomeBreaks = computeIncomeBreaks(incomeValues);
+            const baselineAccessBreaksInclude = computeAccessBreaks(
+              baselineAccessValuesInclude
+            );
+            const baselineAccessBreaksExclude = computeAccessBreaks(
+              baselineAccessValuesExclude
+            );
+            const isolationAccessBreaksInclude = computeAccessBreaks(
+              isolationAccessValuesInclude
+            );
+            const isolationAccessBreaksExclude = computeAccessBreaks(
+              isolationAccessValuesExclude
+            );
+
+            const incomeDetailEl = document.getElementById(
+              "income-tertile-detail"
+            );
+            incomeLegendRanges = [];
+            if (incomeDetailEl) {
+              const incomeLegend = describeTertiles(incomeBreaks, {
+                decimals: 0,
+                lowLabel: "Lowest",
+                midLabel: "Medium",
+                highLabel: "Highest",
+                percentileNotes: [
+                  "≤ 33rd percentile",
+                  "33rd–66th percentile",
+                  "> 66th percentile",
+                ],
+              });
+              incomeLegendRanges = incomeLegend.ranges || [];
+              incomeDetailEl.replaceChildren(
+                ...(incomeLegend.lines || ["n/a"])
+                  .slice()
+                  .reverse()
+                  .map((line) => {
+                    const span = document.createElement("div");
+                    span.textContent = line;
+                    return span;
+                  })
+              );
+            }
+
+            const accessPercentileNotes = [
+              "≤ 33rd percentile",
+              "33rd–66th percentile",
+              "> 66th percentile",
+            ];
+
+            districtModeConfig = {
+              [DISTRICT_MODES.BASELINE]: {
+                include: {
+                  accessBreaks: baselineAccessBreaksInclude,
+                  legend: describeTertiles(baselineAccessBreaksInclude, {
+                    decimals: 1,
+                    lowLabel: "Shortest",
+                    midLabel: "Medium",
+                    highLabel: "Longest",
+                    percentileNotes: accessPercentileNotes,
+                  }),
+                  legendLabel: "All amenities",
+                  colorProperty: "_bivariate_color_baseline",
+                },
+                exclude: {
+                  accessBreaks: baselineAccessBreaksExclude,
+                  legend: describeTertiles(baselineAccessBreaksExclude, {
+                    decimals: 1,
+                    lowLabel: "Shortest",
+                    midLabel: "Medium",
+                    highLabel: "Longest",
+                    percentileNotes: accessPercentileNotes,
+                  }),
+                  legendLabel: "All amenities (no parks)",
+                  colorProperty: "_bivariate_color_baseline_no_parks",
+                },
+              },
+              [DISTRICT_MODES.ISOLATION]: {
+                include: {
+                  accessBreaks: isolationAccessBreaksInclude,
+                  legend: describeTertiles(isolationAccessBreaksInclude, {
+                    decimals: 1,
+                    lowLabel: "Shortest",
+                    midLabel: "Medium",
+                    highLabel: "Longest",
+                    percentileNotes: accessPercentileNotes,
+                  }),
+                  legendLabel: "Non-isolated amenities",
+                  colorProperty: "_bivariate_color_isolation",
+                },
+                exclude: {
+                  accessBreaks: isolationAccessBreaksExclude,
+                  legend: describeTertiles(isolationAccessBreaksExclude, {
+                    decimals: 1,
+                    lowLabel: "Shortest",
+                    midLabel: "Medium",
+                    highLabel: "Longest",
+                    percentileNotes: accessPercentileNotes,
+                  }),
+                  legendLabel: "Non-isolated amenities (no parks)",
+                  colorProperty: "_bivariate_color_isolation_no_parks",
+                },
+              },
+            };
+
+            const finalFeatures = enrichedFeatures.map((feature) => {
+              const props = { ...(feature.properties || {}) };
+              const income = Number(props.median_income_dkk);
+              const incomeClass = classifyTertile(income, incomeBreaks);
+
+              const baselineAccessInclude = Number(
+                props._access_summary_baseline_mean
+              );
+              const baselineAccessExclude = Number(
+                props._access_summary_baseline_mean_no_parks
+              );
+              const isolationAccessInclude = Number(
+                props._access_summary_isolation_mean
+              );
+              const isolationAccessExclude = Number(
+                props._access_summary_isolation_mean_no_parks
+              );
+
+              const baselineClassInclude = classifyAccessibility(
+                baselineAccessInclude,
+                baselineAccessBreaksInclude
+              );
+              const baselineClassExclude = classifyAccessibility(
+                baselineAccessExclude,
+                baselineAccessBreaksExclude
+              );
+              const isolationClassInclude = classifyAccessibility(
+                isolationAccessInclude,
+                isolationAccessBreaksInclude
+              );
+              const isolationClassExclude = classifyAccessibility(
+                isolationAccessExclude,
+                isolationAccessBreaksExclude
+              );
+
+              return {
+                ...feature,
+                properties: {
+                  ...props,
+                  _income_class: incomeClass,
+                  _access_class_baseline: baselineClassInclude,
+                  _access_class_baseline_no_parks: baselineClassExclude,
+                  _access_class_isolation: isolationClassInclude,
+                  _access_class_isolation_no_parks: isolationClassExclude,
+                  _bivariate_color_baseline: resolveBivariateColor(
+                    baselineClassInclude,
+                    incomeClass
+                  ),
+                  _bivariate_color_baseline_no_parks: resolveBivariateColor(
+                    baselineClassExclude,
+                    incomeClass
+                  ),
+                  _bivariate_color_isolation: resolveBivariateColor(
+                    isolationClassInclude,
+                    incomeClass
+                  ),
+                  _bivariate_color_isolation_no_parks: resolveBivariateColor(
+                    isolationClassExclude,
+                    incomeClass
+                  ),
+                },
+              };
+            });
+
+            const legendGrid = document.getElementById("bivariate-legend");
+            if (legendGrid) {
+              legendGrid.innerHTML = "";
+              legendCells.length = 0;
+              for (let access = 2; access >= 0; access -= 1) {
+                for (let income = 0; income < 3; income += 1) {
+                  const cell = document.createElement("div");
+                  cell.className = "legend-cell";
+                  const cellColor =
+                    (BIVARIATE_COLORS[access] &&
+                      BIVARIATE_COLORS[access][income]) ||
+                    "#cccccc";
+                  cell.style.background = cellColor;
+                  cell.addEventListener("click", () => {
+                    if (!cellColor) return;
+                    if (selectedLegendColors.has(cellColor)) {
+                      selectedLegendColors.delete(cellColor);
+                    } else {
+                      selectedLegendColors.add(cellColor);
+                    }
+                    applyLegendSelectionStyles();
+                    applyDistrictPaint(resolveModeConfig(currentDistrictMode));
+                  });
+                  legendGrid.appendChild(cell);
+                  legendCells.push({
+                    element: cell,
+                    accessIndex: access,
+                    incomeIndex: income,
+                    color: cellColor,
+                  });
+                }
+              }
+              applyLegendSelectionStyles();
+            }
+
+            const enrichedGeojson = {
+              ...kvarterData,
+              type: "FeatureCollection",
+              features: finalFeatures,
+            };
+
+            map.addSource("kvarter", {
+              type: "geojson",
+              data: enrichedGeojson,
+            });
+
+            const firstAmenityLayerId =
+              amenityLayers.length > 0 ? amenityLayers[0] : null;
+
+            // Draw all origins; population-isolated ones are visually de-emphasised.
+            map.addLayer(
+              {
+                id: LOW_POP_LAYER_ID,
+                type: "circle",
+                source: LOW_POP_SOURCE_ID,
+                paint: {
+                  "circle-radius": 5,
+                  "circle-color": [
+                    "case",
+                    ["boolean", ["get", "is_isolated_population"], false],
+                    "#bbbbbb",
+                    "#4a4a4a",
+                  ],
+                  "circle-opacity": [
+                    "case",
+                    ["boolean", ["get", "is_isolated_population"], false],
+                    0.4,
+                    0.8,
+                  ],
+                  "circle-stroke-width": 0,
+                },
+              },
+              firstAmenityLayerId ?? undefined
+            );
+
+            map.addLayer(
+              {
+                id: "kvarter-fill",
+                type: "fill",
+                source: "kvarter",
+                paint: {
+                  "fill-color": [
+                    "coalesce",
+                    ["get", "_bivariate_color_baseline"],
+                    "#cccccc",
+                  ],
+                  "fill-opacity": 0.65,
+                },
+              },
+              firstAmenityLayerId ?? undefined
+            );
+
+            map.addLayer(
+              {
+                id: "kvarter-outline",
+                type: "line",
+                source: "kvarter",
+                paint: { "line-color": "#555", "line-width": 1 },
+              },
+              firstAmenityLayerId ?? undefined
+            );
+
+            const lowPopToggle = document.getElementById("toggle-low-population");
+            const applyLowPopVisibility = () => {
+              if (!map.getLayer(LOW_POP_LAYER_ID)) return;
+              const vis =
+                lowPopToggle && !lowPopToggle.checked ? "none" : "visible";
+              map.setLayoutProperty(LOW_POP_LAYER_ID, "visibility", vis);
+            };
+            if (lowPopToggle) {
+              lowPopToggle.addEventListener("change", applyLowPopVisibility);
+            }
+            applyLowPopVisibility();
+
+            // Enable popups on population nodes so they behave like POIs.
+            map.on("mouseenter", LOW_POP_LAYER_ID, () => {
+              map.getCanvas().style.cursor = "pointer";
+            });
+            map.on("mouseleave", LOW_POP_LAYER_ID, () => {
+              map.getCanvas().style.cursor = "";
+            });
+            map.on("click", LOW_POP_LAYER_ID, (e) => {
+              const f = e.features?.[0];
+              if (!f) return;
+              const props = f.properties || {};
+              const popVal = Number(props.node_pop_at_location);
+              const popText = Number.isFinite(popVal)
+                ? formatPopulation(popVal)
+                : "–";
+              const isolation =
+                props.is_isolated_population === true
+                  ? "Population-isolated"
+                  : props.is_isolated_population === false
+                  ? "Not population-isolated"
+                  : "Isolation status unknown";
+              const html = `
+                <div style="font:12px system-ui">
+                  <strong>Network node</strong><br/>
+                  Nearby population: <b>${popText}</b><br/>
+                  Status: ${isolation}
+                  <div style="margin-top:6px;font-weight:600">Network walking time to nearest amenities (minutes)</div>
+                  ${(() => {
+                    const coords = Array.isArray(f.geometry?.coordinates)
+                      ? f.geometry.coordinates
+                      : [e.lngLat.lng, e.lngLat.lat];
+                    const metrics = buildNodeIsoMetrics(coords);
+                    if (!metrics) return "<div>Data unavailable</div>";
+                    return metrics
+                      .map(({ label, value }) =>
+                        `<div>${label}: <b>${formatMinutes(value)}</b></div>`
+                      )
+                      .join("");
+                  })()}
+                </div>`;
+              new mapboxgl.Popup().setLngLat(e.lngLat).setHTML(html).addTo(map);
+            });
+
+            applyDistrictMode(currentDistrictMode);
+
+            // I'm wiring a hover pointer + popup on districts so I can skim stats quickly.
+            // I'm recycling one popup instance so I don't spam the DOM while hovering around.
+            const kvarterPopup = new mapboxgl.Popup({
+              closeButton: false,
+              closeOnClick: false,
+            });
+            map.on("mousemove", "kvarter-fill", (e) => {
+              map.getCanvas().style.cursor = "pointer";
+              const f = e.features && e.features[0];
+              if (!f) return;
+              const p = f.properties || {};
+              const name = p.area_name || p.kvarternavn || "(unnamed)";
+              const suffix =
+                currentDistrictMode === DISTRICT_MODES.ISOLATION ? "_iso" : "";
+              const baseMeanKey =
+                suffix === "_iso"
+                  ? "mean_node_avg_min_to_categories_iso"
+                  : "mean_node_avg_min_to_categories";
+              const baseMedianKey =
+                suffix === "_iso"
+                  ? "median_node_avg_min_to_categories_iso"
+                  : "median_node_avg_min_to_categories";
+              const parksMeanKey = `${baseMeanKey}_no_parks`;
+              const parksMedianKey = `${baseMedianKey}_no_parks`;
+              const meanKey = includeParksInCalculations
+                ? baseMeanKey
+                : parksMeanKey;
+              const medianKey = includeParksInCalculations
+                ? baseMedianKey
+                : parksMedianKey;
+              const rawMean = Number(p[meanKey]);
+              const rawMedian = Number(p[medianKey]);
+              const accessSummary =
+                Number.isFinite(rawMean) && Number.isFinite(rawMedian)
+                  ? { mean: rawMean, median: rawMedian }
+                  : computeDistrictAccessSummary(p, currentDistrictMode, {
+                      meanProp: meanKey,
+                      medianProp: medianKey,
+                      excludeCategories: includeParksInCalculations
+                        ? []
+                        : [PARK_METRIC_KEY],
+                    });
+              const fmt = (v, d = 0) =>
+                v == null || isNaN(v) ? "–" : (+v).toFixed(d);
+              const html = `
+            <div style="font:12px system-ui">
+              <strong>${name}</strong><br/>
+              Income (median): <b>${fmt(p.median_income_dkk, 0)}</b> DKK<br/>
+              Avg minutes across amenities: <b>${fmt(
+                accessSummary.mean,
+                1
+              )}</b> (median: <b>${fmt(accessSummary.median, 1)}</b>)<br/>
+              <div style="margin-top:6px; font-weight:600">Median minutes to amenity</div>
+              ${NETWORK_METRICS.filter(
+                ([key]) =>
+                  includeParksInCalculations || key !== PARK_METRIC_KEY
+              )
+                .map(
+                  ([key, label]) =>
+                    `${label}: <b>${fmt(
+                      p[`median_${key}${suffix}`],
+                      1
+                    )}</b>`
+                )
+                .join("<br/>")}
+            </div>`;
+              kvarterPopup.setLngLat(e.lngLat).setHTML(html).addTo(map);
+            });
+            map.on("mouseleave", "kvarter-fill", () => {
+              map.getCanvas().style.cursor = "";
+              kvarterPopup.remove();
+            });
+
+            // I'm also wiring a toggle for the district layer so I can declutter the view on demand.
+            // I'm wiring the district checkbox so I can hide the polygons when I just want to see points.
+            const toggle = document.getElementById("toggle-kvarter");
+            if (toggle) {
+              const apply = () => {
+                const vis = toggle.checked ? "visible" : "none";
+                if (map.getLayer("kvarter-fill"))
+                  map.setLayoutProperty("kvarter-fill", "visibility", vis);
+                if (map.getLayer("kvarter-outline"))
+                  map.setLayoutProperty("kvarter-outline", "visibility", vis);
+              };
+              toggle.addEventListener("change", apply);
+              apply();
+            }
+
+            // I'm reusing this popup builder for all amenity layers so every click shows district context.
+            function showAmenityPopup(e, layerId) {
+              const f = e.features?.[0];
+              if (!f) return;
+              const pt = e.lngLat;
+
+              // I'm rebuilding the district HTML (kept from before) so the popup still shows those median minutes.
+              const polys = map.queryRenderedFeatures(e.point, {
+                layers: ["kvarter-fill"],
+              });
+              const poly = polys && polys[0];
+              let districtHTML = "";
+              if (poly) {
+              const dp = poly.properties || {};
+              const dname = dp.area_name || "(unnamed)";
+              const suffix =
+                currentDistrictMode === DISTRICT_MODES.ISOLATION
+                  ? "_iso"
+                  : "";
+              const baseMeanKey =
+                suffix === "_iso"
+                  ? "mean_node_avg_min_to_categories_iso"
+                  : "mean_node_avg_min_to_categories";
+              const baseMedianKey =
+                suffix === "_iso"
+                  ? "median_node_avg_min_to_categories_iso"
+                  : "median_node_avg_min_to_categories";
+              const parksMeanKey = `${baseMeanKey}_no_parks`;
+              const parksMedianKey = `${baseMedianKey}_no_parks`;
+              const meanKey = includeParksInCalculations
+                ? baseMeanKey
+                : parksMeanKey;
+              const medianKey = includeParksInCalculations
+                ? baseMedianKey
+                : parksMedianKey;
+              let accessSummary;
+              const rawMean = Number(dp[meanKey]);
+              const rawMedian = Number(dp[medianKey]);
+              if (
+                Number.isFinite(rawMean) &&
+                Number.isFinite(rawMedian)
+              ) {
+                accessSummary = { mean: rawMean, median: rawMedian };
+              } else {
+                accessSummary = computeDistrictAccessSummary(
+                  dp,
+                  currentDistrictMode,
+                  {
+                    meanProp: meanKey,
+                    medianProp: medianKey,
+                    excludeCategories: includeParksInCalculations
+                      ? []
+                      : [PARK_METRIC_KEY],
+                  }
+                );
+              }
+                const fmt = (v, d = 1) =>
+                  v == null || isNaN(v) ? "–" : (+v).toFixed(d);
+                const districtMetrics = NETWORK_METRICS.filter(
+                  ([key]) =>
+                    includeParksInCalculations || key !== PARK_METRIC_KEY
+                )
+                  .map(([key, label]) => {
+                    const prop = `median_${key}${suffix}`;
+                    return `${label}: <b>${fmt(dp[prop])}</b>`;
+                  })
+                  .join(" • ");
+                const viewLabel =
+                  currentDistrictMode === DISTRICT_MODES.ISOLATION
+                    ? includeParksInCalculations
+                      ? "isolated POIs removed"
+                      : "isolated POIs removed (no parks)"
+                    : includeParksInCalculations
+                    ? "all amenities"
+                    : "all amenities (no parks)";
+                districtHTML = `
+                  <div style="margin-top:6px;border-top:1px solid #ddd;padding-top:6px">
+                    <b>${dname}</b><br/>
+                    Income (median): <b>${fmt(
+                      dp.median_income_dkk,
+                      0
+                    )}</b> DKK<br/>
+                    Avg minutes across amenities (${viewLabel}): <b>${fmt(
+                  accessSummary.mean,
+                  1
+                )}</b> (median: <b>${fmt(accessSummary.median, 1)}</b>)<br/>
+                    <div style="margin-top:4px; font-weight:600">District — median minutes</div>
+                    ${districtMetrics}
+                  </div>`;
+              }
+
+              const props = f.properties || {};
+              const poiName = fallbackPoiName(props);
+              const poiType =
+                props.amenity ||
+                props.leisure ||
+                props.shop ||
+                props.public_transport ||
+                "unknown";
+              const populationHtml = buildPopulationSummary(props);
+
+              const originCoords =
+                Array.isArray(f.geometry?.coordinates) &&
+                f.geometry.coordinates.length >= 2
+                  ? f.geometry.coordinates
+                  : [pt.lng, pt.lat];
+              const clickedId = featureId(f);
+
+              const popup = new mapboxgl.Popup().setLngLat(pt).addTo(map);
+
+              const baseInfoHtml = `<strong>${poiName}</strong><br/>Type: ${poiType}`;
+              const setPopupContent = (metricsHtml) => {
+                popup.setHTML(
+                  `${baseInfoHtml}${populationHtml}${metricsHtml}${districtHTML}`
+                );
+              };
+
+              setPopupContent(
+                '<div style="margin-top:6px">Loading access metrics…</div>'
+              );
+
+              const overrideCoords =
+                typeof props.network_x === "number" &&
+                typeof props.network_y === "number"
+                  ? [props.network_x, props.network_y]
+                  : null;
+              const extraMinutesRaw = Number(props.extra_travel_minutes);
+              const extraMinutes =
+                Number.isFinite(extraMinutesRaw) && extraMinutesRaw > 0
+                  ? extraMinutesRaw
+                  : null;
+              const zeroExtraForSupermarkets = shouldZeroSupermarketExtra(poiName);
+              const zeroExtraForFood = shouldZeroFoodExtra(poiName);
+              const categoryOverrides = {};
+              if (zeroExtraForSupermarkets) {
+                categoryOverrides.min_to_supermarkets = { extraMinutes: 0 };
+              }
+              if (zeroExtraForFood) {
+                categoryOverrides.min_to_cafes_restaurants = { extraMinutes: 0 };
+              }
+              const hasOverrides = Object.keys(categoryOverrides).length > 0;
+              const metricOptions = {
+                overrideCoords,
+                extraMinutes,
+                categoryOverrides: hasOverrides ? categoryOverrides : null,
+              };
+
+              const renderStraightLine = () => {
+                const straightHtml = buildStraightLineMetricsHtml(
+                  originCoords,
+                  clickedId,
+                  metricOptions
+                );
+                setPopupContent(
+                  `<div style="margin-top:6px"><div style="font-weight:600">Straight-line minutes to nearest (fallback)</div>${straightHtml}</div>`
+                );
+              };
+
+              const renderNetwork = () => {
+                const networkResult = buildNetworkMetrics(
+                  originCoords,
+                  metricOptions
+                );
+                if (!networkResult) {
+                  return false;
+                }
+                setPopupContent(
+                  `<div style="margin-top:6px"><div style="font-weight:600">${networkResult.label}</div>${networkResult.html}</div>`
+                );
+                return true;
+              };
+
+              Promise.resolve(networkAccessPromise)
+                .then(() => {
+                  if (!renderNetwork()) {
+                    renderStraightLine();
+                  }
+                })
+                .catch(() => {
+                  renderStraightLine();
+                });
+            }
+
+            // I'm augmenting each amenity click handler so it also shows the district info.
+            focusAmenityFeatureImpl = function focusAmenityFeature(feature) {
+              if (!feature || feature.geometry?.type !== "Point") return;
+              const coords = feature.geometry.coordinates;
+              if (!Array.isArray(coords) || coords.length < 2) return;
+              const lngLat = { lng: coords[0], lat: coords[1] };
+              const point = map.project(lngLat);
+              const targetZoom = Math.max(map.getZoom(), 15);
+              map.flyTo({
+                center: lngLat,
+                zoom: targetZoom,
+                essential: true,
+              });
+              const categories = feature.properties?.source_categories;
+              const layerId =
+                Array.isArray(categories) && categories.length
+                  ? categories[0]
+                  : null;
+              showAmenityPopup(
+                {
+                  features: [feature],
+                  lngLat,
+                  point,
+                },
+                layerId
+              );
+            };
+            if (
+              pendingFocusFeature &&
+              typeof focusAmenityFeatureImpl === "function"
+            ) {
+              focusAmenityFeatureImpl(pendingFocusFeature);
+              pendingFocusFeature = null;
+            }
+
+            [
+              "cafes_restaurants",
+              "supermarkets",
+              "education",
+              "health",
+              "culture",
+              "parks",
+              "playgrounds",
+              "pt_stops",
+            ].forEach((id) => {
+              // I'm only attaching the click handler if the layer actually exists to avoid console errors on load.
+              if (map.getLayer(id)) {
+                map.on("click", id, (e) => showAmenityPopup(e, id));
+              }
+            });
+          })
+          .catch(() => {
+            console.warn(
+              "Could not load 'district_income_access_output.geojson'. Generate it with join_income_to_geojson.py."
+            );
+          });
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,8 @@
+cache/
+pipeline/cache/
+*.csv
+*.geojson
+*.json
+*.tif
+*.parquet
+*.zip
