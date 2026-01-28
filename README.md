@@ -7,7 +7,7 @@ Cem Ergin, IT University of Copenhagen, January 2026
 
 The project examines whether differences in pedestrian accessibility to urban amenities are associated with income differences across Copenhagen districts.
 
----
+---e
 
 ## Project motivation
 
@@ -42,6 +42,33 @@ Accessibility is calculated using a network-based approach:
 Accessibility values are aggregated to the district level and compared with district-level income statistics.
 
 To avoid bias from uninhabited areas such as harbours and industrial zones, a population-based filtering step is applied. Street network nodes located in very low-population areas are excluded from aggregation, producing accessibility measures that better reflect residents’ lived experience.
+
+---
+
+## Data Pipeline
+The analysis is implemented as a three-step data processing pipeline. Each step produces explicit outputs that are used by the next stage.
+
+### Step 1: Node-level accessibility computation
+
+A pedestrian street network is built for Copenhagen and Frederiksberg using OpenStreetMap data. Accessibility is computed at the level of individual street network nodes.
+
+For each node, walking-time distance is calculated to the nearest amenity in each category using network shortest paths. Nodes are also annotated with local population values derived from a population raster, allowing identification of nodes located in very low-population areas.
+
+This step produces node-level accessibility metrics and GeoJSON outputs used for visualisation.
+
+### Step 2: District-level aggregation
+
+Node-level accessibility values are spatially joined to district polygons and aggregated per district.
+
+For each district, median, mean, and upper-percentile accessibility values are computed across nodes. Isolation-aware versions of these metrics are calculated by excluding nodes in low-population areas.
+
+This step produces a district-level accessibility table used for statistical comparison.
+
+### Step 3: Income integration
+
+District-level accessibility metrics are merged with median income data.
+
+Because district naming conventions differ between datasets, a deterministic name mapping is used to ensure correct alignment. The final output combines accessibility metrics, income values, and district geometry for analysis and web-based visualisation.
 
 ---
 
